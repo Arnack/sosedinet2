@@ -38,6 +38,12 @@ export default function SettingsScreen() {
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Информация</Text>
+        <TouchableOpacity
+          style={styles.row}
+          onPress={() => WebBrowser.openBrowserAsync('https://sosedinet.ru/profile/notifications')}>
+          <Text style={styles.rowLabel}>Уведомления и настройки</Text>
+          <Text style={styles.rowChevron}>›</Text>
+        </TouchableOpacity>
         <TouchableOpacity style={styles.row} onPress={openPrivacyPolicy}>
           <Text style={styles.rowLabel}>Политика конфиденциальности</Text>
           <Text style={styles.rowChevron}>›</Text>
