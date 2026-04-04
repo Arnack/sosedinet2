@@ -57,6 +57,7 @@ const INJECTED_JS = `
 
 export default function WebViewScreen() {
   const webViewRef = useRef<WebView>(null);
+  const lastNavUrlRef = useRef<string | null>(null);
   const [canGoBack, setCanGoBack] = useState(false);
   const [initialLoad, setInitialLoad] = useState(true);
   const [hasError, setHasError] = useState(false);
@@ -82,10 +83,21 @@ export default function WebViewScreen() {
     const sub = AppState.addEventListener('change', (state) => {
       if (state === 'active') {
         webViewRef.current?.injectJavaScript(buildBadgePollInjectScript());
+        const t = getCachedExpoPushToken();
+        if (t) injectPushToken(t);
       }
     });
     return () => sub.remove();
-  }, []);
+  }, [injectPushToken]);
+
+  // WebView often omits re-running onLoadEnd after client-side login; retry token registration.
+  useEffect(() => {
+    const id = setInterval(() => {
+      const t = getCachedExpoPushToken();
+      if (t) injectPushToken(t);
+    }, 45000);
+    return () => clearInterval(id);
+  }, [injectPushToken]);
 
   // Android hardware back: WebView history, then exit confirmation (avoid silent app exit)
   useFocusEffect(
@@ -110,15 +122,31 @@ export default function WebViewScreen() {
     }, [canGoBack, exitConfirmVisible])
   );
 
-  const onNavigationStateChange = (navState: WebViewNavigation) => {
-    setCanGoBack(navState.canGoBack);
-  };
+  const onNavigationStateChange = useCallback(
+    (navState: WebViewNavigation) => {
+      setCanGoBack(navState.canGoBack);
+      const url = navState.url;
+      if (url && url !== lastNavUrlRef.current) {
+        lastNavUrlRef.current = url;
+        const t = getCachedExpoPushToken();
+        if (t) injectPushToken(t);
+      }
+    },
+    [injectPushToken]
+  );
 
   const onMessage = (event: WebViewMessageEvent) => {
     try {
       const data = JSON.parse(event.nativeEvent.data);
       if (data.type === 'badge' && typeof data.count === 'number') {
         void setBadgeCount(data.count);
+      }
+      if (data.type === 'pushTokenRegister' && !data.ok) {
+        console.warn(
+          '[SosediNet] /api/push-token failed',
+          data.status,
+          data.body ?? data.error
+        );
       }
     } catch {}
   };

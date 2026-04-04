@@ -79,8 +79,41 @@ export function buildPushTokenInjectScript(token: string, platform: string): str
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
         body: ${JSON.stringify(body)}
-      }).catch(function(){});
-    } catch (e) {}
+      })
+        .then(function(r){
+          return r.text().then(function(t){
+            var parsed = t;
+            try { parsed = JSON.parse(t); } catch (e) {}
+            if (window.ReactNativeWebView) {
+              window.ReactNativeWebView.postMessage(JSON.stringify({
+                type: 'pushTokenRegister',
+                ok: r.ok,
+                status: r.status,
+                body: typeof parsed === 'string' ? parsed.slice(0, 300) : parsed
+              }));
+            }
+          });
+        })
+        .catch(function(err){
+          if (window.ReactNativeWebView) {
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+              type: 'pushTokenRegister',
+              ok: false,
+              status: 0,
+              error: String(err)
+            }));
+          }
+        });
+    } catch (e) {
+      if (window.ReactNativeWebView) {
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          type: 'pushTokenRegister',
+          ok: false,
+          status: 0,
+          error: String(e)
+        }));
+      }
+    }
   })(); true;`;
 }
 
