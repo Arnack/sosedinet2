@@ -81,6 +81,7 @@ export default function WebViewScreen() {
   /** Cookie-based /api/push-token + JWT link for native /api/expo/push-register */
   const syncPushRegistration = useCallback(() => {
     const t = getCachedExpoPushToken();
+    console.log('[PUSH] syncPushRegistration, cachedToken:', t ? t.slice(0, 30) + '...' : null);
     if (t) injectPushToken(t);
     requestExpoPushLink();
   }, [injectPushToken, requestExpoPushLink]);
@@ -159,15 +160,17 @@ export default function WebViewScreen() {
         );
       }
       if (data.type === 'expoPushLink') {
+        console.log('[PUSH] expoPushLink response:', data.ok, data.status, data.error);
         if (!data.ok || !data.linkToken) {
           console.warn(
-            '[SosediNet] /api/expo/push-link failed',
+            '[PUSH] /api/expo/push-link FAILED',
             data.status,
             data.error
           );
           return;
         }
         const t = getCachedExpoPushToken();
+        console.log('[PUSH] have cached token for register?', !!t);
         if (!t) {
           return;
         }
@@ -176,9 +179,10 @@ export default function WebViewScreen() {
           t,
           Platform.OS
         ).then((r) => {
+          console.log('[PUSH] /api/expo/push-register result:', r.ok, r.status, JSON.stringify(r.body));
           if (!r.ok) {
             console.warn(
-              '[SosediNet] /api/expo/push-register failed',
+              '[PUSH] /api/expo/push-register FAILED',
               r.status,
               r.body
             );

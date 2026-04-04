@@ -165,6 +165,7 @@ export async function registerExpoPushWithLinkToken(
   expoPushToken: string,
   platform: string
 ): Promise<{ ok: boolean; status: number; body: unknown }> {
+  console.log('[PUSH] registerExpoPushWithLinkToken called, token:', expoPushToken, 'platform:', platform);
   const res = await fetch(`${SITE_ORIGIN}/api/expo/push-register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -247,7 +248,9 @@ export function subscribeNotificationBadgeEffects(): () => void {
 
 /** Request push permission, channel, token; token is registered from WebView with session cookies. */
 export async function registerForPushNotifications(): Promise<string | null> {
+  console.log('[PUSH] registerForPushNotifications started');
   const { status: existing } = await Notifications.getPermissionsAsync();
+  console.log('[PUSH] existing permission:', existing);
   let finalStatus = existing;
 
   if (existing !== 'granted') {
@@ -259,9 +262,11 @@ export async function registerForPushNotifications(): Promise<string | null> {
       },
     });
     finalStatus = status;
+    console.log('[PUSH] requested permission, got:', finalStatus);
   }
 
   if (finalStatus !== 'granted') {
+    console.log('[PUSH] permission denied, aborting');
     notifyPushTokenListeners(null);
     return null;
   }
@@ -272,10 +277,13 @@ export async function registerForPushNotifications(): Promise<string | null> {
       importance: Notifications.AndroidImportance.MAX,
       showBadge: true,
     });
+    console.log('[PUSH] android channel created');
   }
 
   try {
+    console.log('[PUSH] calling getExpoPushTokenAsync...');
     const { data: token } = await Notifications.getExpoPushTokenAsync();
+    console.log('[PUSH] got expo token:', token);
     notifyPushTokenListeners(token);
 
     if (!nativePushTokenListenerAttached) {
@@ -292,7 +300,7 @@ export async function registerForPushNotifications(): Promise<string | null> {
 
     return token;
   } catch (e) {
-    console.error('getExpoPushTokenAsync failed', e);
+    console.error('[PUSH] getExpoPushTokenAsync FAILED:', e);
     notifyPushTokenListeners(null);
     return null;
   }
