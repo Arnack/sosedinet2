@@ -1,4 +1,4 @@
-import React, { useRef, useState, useCallback } from 'react';
+import React, { useRef, useState, useCallback, useEffect } from 'react';
 import {
   StyleSheet,
   ActivityIndicator,
@@ -6,13 +6,22 @@ import {
   Text,
   Platform,
   BackHandler,
+  Modal,
+  Pressable,
+  AppState,
 } from 'react-native';
 import { WebView, WebViewNavigation } from 'react-native-webview';
 import { ShouldStartLoadRequest } from 'react-native-webview/lib/WebViewTypes';
 import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebViewMessageEvent } from 'react-native-webview';
-import { setBadgeCount } from '@/lib/notifications';
+import {
+  buildBadgePollInjectScript,
+  buildPushTokenInjectScript,
+  getCachedExpoPushToken,
+  onExpoPushTokenReady,
+  setBadgeCount,
+} from '@/lib/notifications';
 
 const SITE_URL = 'https://sosedinet.ru';
 
@@ -51,24 +60,54 @@ export default function WebViewScreen() {
   const [canGoBack, setCanGoBack] = useState(false);
   const [initialLoad, setInitialLoad] = useState(true);
   const [hasError, setHasError] = useState(false);
+  const [exitConfirmVisible, setExitConfirmVisible] = useState(false);
   const insets = useSafeAreaInsets();
 
-  // Android hardware back button
+  const androidBottomPad =
+    Platform.OS === 'android' ? Math.max(insets.bottom, 8) : insets.bottom;
+
+  const injectPushToken = useCallback((token: string) => {
+    webViewRef.current?.injectJavaScript(
+      buildPushTokenInjectScript(token, Platform.OS)
+    );
+  }, []);
+
+  useEffect(() => {
+    return onExpoPushTokenReady((token) => {
+      if (token) injectPushToken(token);
+    });
+  }, [injectPushToken]);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        webViewRef.current?.injectJavaScript(buildBadgePollInjectScript());
+      }
+    });
+    return () => sub.remove();
+  }, []);
+
+  // Android hardware back: WebView history, then exit confirmation (avoid silent app exit)
   useFocusEffect(
     useCallback(() => {
       if (Platform.OS !== 'android') return;
 
       const onBackPress = () => {
+        if (exitConfirmVisible) {
+          setExitConfirmVisible(false);
+          return true;
+        }
         if (canGoBack && webViewRef.current) {
           webViewRef.current.goBack();
           return true;
         }
-        return false;
+        setExitConfirmVisible(true);
+        return true;
       };
 
       const subscription = BackHandler.addEventListener('hardwareBackPress', onBackPress);
       return () => subscription.remove();
-    }, [canGoBack])
+    }, [canGoBack, exitConfirmVisible])
   );
 
   const onNavigationStateChange = (navState: WebViewNavigation) => {
@@ -79,7 +118,7 @@ export default function WebViewScreen() {
     try {
       const data = JSON.parse(event.nativeEvent.data);
       if (data.type === 'badge' && typeof data.count === 'number') {
-        setBadgeCount(data.count);
+        void setBadgeCount(data.count);
       }
     } catch {}
   };
@@ -93,7 +132,11 @@ export default function WebViewScreen() {
 
   if (hasError) {
     return (
-      <View style={styles.center}>
+      <View
+        style={[
+          styles.center,
+          { paddingTop: insets.top, paddingBottom: androidBottomPad },
+        ]}>
         <Text style={styles.errorTitle}>Нет соединения</Text>
         <Text style={styles.errorText}>Проверьте подключение к интернету</Text>
         <Text
@@ -109,13 +152,21 @@ export default function WebViewScreen() {
   }
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
+    <View
+      style={[
+        styles.container,
+        { paddingTop: insets.top, paddingBottom: androidBottomPad },
+      ]}>
       <WebView
         ref={webViewRef}
         source={{ uri: SITE_URL }}
         style={styles.webview}
         onNavigationStateChange={onNavigationStateChange}
-        onLoadEnd={() => setInitialLoad(false)}
+        onLoadEnd={() => {
+          setInitialLoad(false);
+          const t = getCachedExpoPushToken();
+          if (t) injectPushToken(t);
+        }}
         onError={() => setHasError(true)}
         onHttpError={(syntheticEvent) => {
           if (syntheticEvent.nativeEvent.statusCode >= 500) {
@@ -144,6 +195,40 @@ export default function WebViewScreen() {
           <ActivityIndicator size="large" color="#2f95dc" />
         </View>
       )}
+
+      <Modal
+        visible={exitConfirmVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setExitConfirmVisible(false)}>
+        <Pressable style={styles.modalBackdrop} onPress={() => setExitConfirmVisible(false)}>
+          <Pressable style={styles.modalCard} onPress={(e) => e.stopPropagation()}>
+            <Text style={styles.modalTitle}>Выйти из приложения?</Text>
+            <Text style={styles.modalBody}>
+              Системная кнопка «Назад» закроет приложение. Продолжить?
+            </Text>
+            <View style={styles.modalActions}>
+              <Pressable
+                style={({ pressed }) => [styles.modalBtn, pressed && styles.modalBtnPressed]}
+                onPress={() => setExitConfirmVisible(false)}>
+                <Text style={styles.modalBtnCancelText}>Остаться</Text>
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.modalBtn,
+                  styles.modalBtnPrimary,
+                  pressed && styles.modalBtnPressed,
+                ]}
+                onPress={() => {
+                  setExitConfirmVisible(false);
+                  BackHandler.exitApp();
+                }}>
+                <Text style={styles.modalBtnExitText}>Выйти</Text>
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -184,5 +269,63 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: '#fff',
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  modalCard: {
+    width: '100%',
+    maxWidth: 340,
+    backgroundColor: '#fff',
+    borderRadius: 14,
+    padding: 20,
+    elevation: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 12,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    marginBottom: 8,
+    color: '#111',
+  },
+  modalBody: {
+    fontSize: 15,
+    color: '#555',
+    lineHeight: 21,
+    marginBottom: 20,
+  },
+  modalActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 12,
+  },
+  modalBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    backgroundColor: '#f0f0f0',
+  },
+  modalBtnPrimary: {
+    backgroundColor: '#2f95dc',
+  },
+  modalBtnPressed: {
+    opacity: 0.85,
+  },
+  modalBtnCancelText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+  },
+  modalBtnExitText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#fff',
   },
 });
