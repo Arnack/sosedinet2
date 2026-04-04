@@ -2,6 +2,9 @@ import * as Notifications from 'expo-notifications';
 import type { Notification } from 'expo-notifications';
 import { Platform } from 'react-native';
 
+/** Site origin for native fetch (push-register) and WebView base URL. */
+export const SITE_ORIGIN = 'https://sosedinet.ru';
+
 // Configure notification behavior (foreground presentation + badge)
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -115,6 +118,70 @@ export function buildPushTokenInjectScript(token: string, platform: string): str
       }
     }
   })(); true;`;
+}
+
+/**
+ * WebView: obtain short-lived JWT (session cookies) → RN POSTs /api/expo/push-register with Expo token.
+ */
+export function buildExpoPushLinkInjectScript(): string {
+  return `(function(){
+    fetch('/api/expo/push-link', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: '{}'
+    })
+      .then(function(r){
+        return r.text().then(function(t){
+          var j = {};
+          try { j = JSON.parse(t); } catch (e) {}
+          if (window.ReactNativeWebView) {
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+              type: 'expoPushLink',
+              ok: r.ok,
+              status: r.status,
+              linkToken: j.linkToken,
+              error: j.error
+            }));
+          }
+        });
+      })
+      .catch(function(err){
+        if (window.ReactNativeWebView) {
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: 'expoPushLink',
+            ok: false,
+            status: 0,
+            error: String(err)
+          }));
+        }
+      });
+  })(); true;`;
+}
+
+/** Register Expo device token using link JWT from WebView (no HttpOnly cookies in RN). */
+export async function registerExpoPushWithLinkToken(
+  linkToken: string,
+  expoPushToken: string,
+  platform: string
+): Promise<{ ok: boolean; status: number; body: unknown }> {
+  const res = await fetch(`${SITE_ORIGIN}/api/expo/push-register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      linkToken,
+      token: expoPushToken,
+      platform,
+    }),
+  });
+  const text = await res.text();
+  let body: unknown = text.slice(0, 400);
+  try {
+    body = JSON.parse(text);
+  } catch {
+    /* keep text slice */
+  }
+  return { ok: res.ok, status: res.status, body };
 }
 
 /** JS snippet: refresh unread count → postMessage to RN (same as injected poll). */

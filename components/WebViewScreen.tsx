@@ -16,14 +16,15 @@ import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebViewMessageEvent } from 'react-native-webview';
 import {
+  SITE_ORIGIN,
   buildBadgePollInjectScript,
+  buildExpoPushLinkInjectScript,
   buildPushTokenInjectScript,
   getCachedExpoPushToken,
   onExpoPushTokenReady,
+  registerExpoPushWithLinkToken,
   setBadgeCount,
 } from '@/lib/notifications';
-
-const SITE_URL = 'https://sosedinet.ru';
 
 const BADGE_POLL_INTERVAL = 60000; // 60 seconds
 
@@ -73,31 +74,41 @@ export default function WebViewScreen() {
     );
   }, []);
 
+  const requestExpoPushLink = useCallback(() => {
+    webViewRef.current?.injectJavaScript(buildExpoPushLinkInjectScript());
+  }, []);
+
+  /** Cookie-based /api/push-token + JWT link for native /api/expo/push-register */
+  const syncPushRegistration = useCallback(() => {
+    const t = getCachedExpoPushToken();
+    if (t) injectPushToken(t);
+    requestExpoPushLink();
+  }, [injectPushToken, requestExpoPushLink]);
+
   useEffect(() => {
     return onExpoPushTokenReady((token) => {
-      if (token) injectPushToken(token);
+      if (token) syncPushRegistration();
+      else requestExpoPushLink();
     });
-  }, [injectPushToken]);
+  }, [syncPushRegistration, requestExpoPushLink]);
 
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
       if (state === 'active') {
         webViewRef.current?.injectJavaScript(buildBadgePollInjectScript());
-        const t = getCachedExpoPushToken();
-        if (t) injectPushToken(t);
+        syncPushRegistration();
       }
     });
     return () => sub.remove();
-  }, [injectPushToken]);
+  }, [syncPushRegistration]);
 
   // WebView often omits re-running onLoadEnd after client-side login; retry token registration.
   useEffect(() => {
     const id = setInterval(() => {
-      const t = getCachedExpoPushToken();
-      if (t) injectPushToken(t);
+      syncPushRegistration();
     }, 45000);
     return () => clearInterval(id);
-  }, [injectPushToken]);
+  }, [syncPushRegistration]);
 
   // Android hardware back: WebView history, then exit confirmation (avoid silent app exit)
   useFocusEffect(
@@ -128,11 +139,10 @@ export default function WebViewScreen() {
       const url = navState.url;
       if (url && url !== lastNavUrlRef.current) {
         lastNavUrlRef.current = url;
-        const t = getCachedExpoPushToken();
-        if (t) injectPushToken(t);
+        syncPushRegistration();
       }
     },
-    [injectPushToken]
+    [syncPushRegistration]
   );
 
   const onMessage = (event: WebViewMessageEvent) => {
@@ -147,6 +157,33 @@ export default function WebViewScreen() {
           data.status,
           data.body ?? data.error
         );
+      }
+      if (data.type === 'expoPushLink') {
+        if (!data.ok || !data.linkToken) {
+          console.warn(
+            '[SosediNet] /api/expo/push-link failed',
+            data.status,
+            data.error
+          );
+          return;
+        }
+        const t = getCachedExpoPushToken();
+        if (!t) {
+          return;
+        }
+        void registerExpoPushWithLinkToken(
+          data.linkToken as string,
+          t,
+          Platform.OS
+        ).then((r) => {
+          if (!r.ok) {
+            console.warn(
+              '[SosediNet] /api/expo/push-register failed',
+              r.status,
+              r.body
+            );
+          }
+        });
       }
     } catch {}
   };
@@ -187,13 +224,12 @@ export default function WebViewScreen() {
       ]}>
       <WebView
         ref={webViewRef}
-        source={{ uri: SITE_URL }}
+        source={{ uri: SITE_ORIGIN }}
         style={styles.webview}
         onNavigationStateChange={onNavigationStateChange}
         onLoadEnd={() => {
           setInitialLoad(false);
-          const t = getCachedExpoPushToken();
-          if (t) injectPushToken(t);
+          syncPushRegistration();
         }}
         onError={() => setHasError(true)}
         onHttpError={(syntheticEvent) => {
