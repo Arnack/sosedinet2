@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "474511265841",
+    "project_id": "sosedinet",
+    "storage_bucket": "sosedinet.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:474511265841:android:141581bdfc08d37198c510",
+        "android_client_info": {
+          "package_name": "ru.sosedinet.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA98anPdU1mE4g6KbUo7puyztJH1w0R7nU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

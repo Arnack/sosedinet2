@@ -22,6 +22,7 @@ import {
   buildPushTokenInjectScript,
   getCachedExpoPushToken,
   onExpoPushTokenReady,
+  onNotificationNav,
   registerExpoPushWithLinkToken,
   setBadgeCount,
 } from '@/lib/notifications';
@@ -110,6 +111,15 @@ export default function WebViewScreen() {
     }, 45000);
     return () => clearInterval(id);
   }, [syncPushRegistration]);
+
+  // Navigate WebView when user taps a notification with a URL
+  useEffect(() => {
+    return onNotificationNav((url) => {
+      webViewRef.current?.injectJavaScript(
+        `window.location.href = ${JSON.stringify(url)}; true;`
+      );
+    });
+  }, []);
 
   // Android hardware back: WebView history, then exit confirmation (avoid silent app exit)
   useFocusEffect(

@@ -1,9 +1,44 @@
 import * as Notifications from 'expo-notifications';
-import type { Notification } from 'expo-notifications';
+import type { Notification, NotificationResponse } from 'expo-notifications';
 import { Platform } from 'react-native';
 
 /** Site origin for native fetch (push-register) and WebView base URL. */
 export const SITE_ORIGIN = 'https://sosedinet.ru';
+
+// ── Notification tap → deep-link navigation ──────────────────────────
+type NavCallback = (url: string) => void;
+const navListeners = new Set<NavCallback>();
+let pendingNavUrl: string | null = null;
+
+/** Subscribe to notification-tap navigation URLs. Fires immediately if a tap is already pending. */
+export function onNotificationNav(cb: NavCallback): () => void {
+  navListeners.add(cb);
+  if (pendingNavUrl) {
+    const url = pendingNavUrl;
+    pendingNavUrl = null;
+    queueMicrotask(() => cb(url));
+  }
+  return () => navListeners.delete(cb);
+}
+
+function extractNavUrl(response: NotificationResponse): string | null {
+  const data = response.notification.request.content.data ?? {};
+  // backend sends { url: "/users/123/ads" } or full URL
+  if (typeof data.url === 'string' && data.url.length > 0) {
+    return data.url.startsWith('http') ? data.url : `${SITE_ORIGIN}${data.url}`;
+  }
+  return null;
+}
+
+function dispatchNavUrl(url: string) {
+  if (navListeners.size === 0) {
+    pendingNavUrl = url;
+    return;
+  }
+  navListeners.forEach((cb) => {
+    try { cb(url); } catch (e) { console.warn('navListener error', e); }
+  });
+}
 
 // Configure notification behavior (foreground presentation + badge)
 Notifications.setNotificationHandler({
@@ -234,12 +269,16 @@ export function subscribeNotificationBadgeEffects(): () => void {
   subs.push(
     Notifications.addNotificationResponseReceivedListener((response) => {
       void applyBadgeFromNotificationIfPresent(response.notification);
+      const url = extractNavUrl(response);
+      if (url) dispatchNavUrl(url);
     })
   );
 
   void Notifications.getLastNotificationResponseAsync().then((response) => {
-    if (response?.notification) {
+    if (response) {
       void applyBadgeFromNotificationIfPresent(response.notification);
+      const url = extractNavUrl(response);
+      if (url) dispatchNavUrl(url);
     }
   });
 
